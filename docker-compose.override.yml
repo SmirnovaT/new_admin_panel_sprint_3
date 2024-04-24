@@ -1,0 +1,16 @@
+version: '3.3'
+
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  service:
+    ports:
+      - "127.0.0.1:8000:8000"
+
+
+
+  elastic:
+    ports:
+      - "127.0.0.1:9200:9200"
