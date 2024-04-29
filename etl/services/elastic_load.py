@@ -1,63 +1,57 @@
-import json
-import logging
+from elasticsearch import Elasticsearch, ConnectionError, RequestError
 
-import requests
+from elasticsearch.helpers import bulk
 
 from etl import settings
+from etl.settings import logger
 from etl.shared.backoff import backoff
 
 
 class ElasticService:
+    "Сервис создания индекса в эластике и загрузка данных в него"
+
+    @backoff(start_sleep_time=0.1, factor=2, border_sleep_time=10)
     def elastic_load(self, data: list):
-        if not self.check_index_exists():
-            self.create_index()
-        self.load_data_to_elastic(data)
+        es = self.connect_elasticsearch()
+        if es is None:
+            logger.error("Не удалось подключиться к Elasticsearch")
+            return None
+        else:
+            actions = [
+                {
+                    "_index": settings.INDEX_NAME,
+                    "_id": document["id"],
+                    "_source": document,
+                }
+                for document in data
+            ]
+            el_update = bulk(es, actions)
+            logger.info("Загрузили пачку данных в эластик")
+            return el_update
 
     @backoff(start_sleep_time=0.1, factor=2, border_sleep_time=10)
-    def create_index(self):
-        index_config = self.index_config()
-        url = settings.ELASTIC_URL
-        headers = {"Content-Type": "application/json"}
-        try:
-            requests.put(
-                url, headers=headers, data=json.dumps(index_config), timeout=15
-            )
-        except Exception as e:
-            logging.error(e)
-
-    @backoff(start_sleep_time=0.1, factor=2, border_sleep_time=10)
-    def load_data_to_elastic(self, data: list):
-        url = settings.ELASTIC_URL + "_doc/"
-        headers = {"Content-Type": "application/json"}
-        try:
-            requests.post(url, headers=headers, data=json.dumps(data), timeout=15)
-            logging.info("Загрузиди данные в эластик")
-        except Exception as e:
-            logging.error(e)
-
-    @backoff(start_sleep_time=0.1, factor=2, border_sleep_time=10)
-    def index_config(self):
+    def create_index(self, es, index_name):
         with open("es_schema.txt", "r", encoding="utf8") as file:
-            index_config = file.read()
-        url = settings.ELASTIC_URL
-        headers = {"Content-Type": "application/json"}
-        try:
-            requests.put(
-                url, headers=headers, data=json.dumps(index_config), timeout=15
-            )
-            logging.info("Создали индекс")
-        except Exception as e:
-            logging.error(e)
+            index_body = file.read()
+            es.indices.create(index=index_name, body=index_body)
+            logger.info(f"Индекс '{index_name}' создан.")
 
     @backoff(start_sleep_time=0.1, factor=2, border_sleep_time=10)
-    def check_index_exists(self):
-        url = settings.ELASTIC_URL
+    def connect_elasticsearch(self):
         try:
-            response = requests.get(f"{url}")
-            if response.status_code == 200:
-                return True
+            es = Elasticsearch(settings.ELASTIC_URL)
+            index_name = settings.INDEX_NAME
+            if not es.indices.exists(index=index_name):
+                self.create_index(es, index_name)
             else:
-                return False
-        except requests.exceptions.RequestException as e:
-            logging.error(f"Ошибка при проверке индекса: {e}")
-            return False
+                logger.info(f"Индекс '{index_name}' уже существует.")
+            return es
+        except ConnectionError as e:
+            logger.error(f"Ошибка соединения с Elasticsearch: {e}")
+            return None
+        except RequestError as e:
+            logger.error(f"Ошибка запроса Elasticsearch: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Непредвиденная ошибка: {e}")
+            return None

@@ -1,53 +1,45 @@
-import psycopg2.extras
-
+from uuid import UUID
+from typing import Generator, List, Tuple
 import psycopg2
-
-import psycopg2.extensions
 import psycopg2.extras
 
-psycopg2.extras.register_uuid()
+from etl import settings
 
 
 class FilmWorkRepository:
-    def get_update_ids(self, pg_conn, table, date_start, date_end):
+    def get_update_ids(
+        self, pg_conn, table: str, date_start: str, date_end: str
+    ) -> Generator[List[Tuple[UUID]], None, None]:
+        """Получение обновленных id за переданный период времени из таблиц (film_work, genre, person)"""
         cur = pg_conn.cursor()
         cur.execute(
             f"""SELECT id FROM content.{table}
         WHERE updated_at >= '{date_start}' AND updated_at <= '{date_end}'
         """
         )
-        rows = cur.fetchall()
-        result = tuple([str(row[0]) for row in rows])
-        return result
+        while rows := cur.fetchmany(settings.BUTCH_SIZE):
+            yield rows
 
-    def person_film_work(self, pg_conn, update_ids):
-        cur = pg_conn.cursor()
-        cur.execute(
-            f"""SELECT fw.id
-        FROM content.film_work fw
-        LEFT JOIN content.person_film_work pfw ON fw.id = pfw.film_work_id
-        WHERE pfw.person_id IN {update_ids}"""
-        )
-        rows = cur.fetchall()
-        result = tuple([str(row[0]) for row in rows])
-        return result
+    def execute_query(
+        self, pg_conn, update_ids: tuple, table: str
+    ) -> Generator[List[Tuple[UUID]], None, None]:
+        """Общая функция для получения film_work_ids по genre_ids или по person_ids
+        в зависимости от переданной таблицы - person или genre"""
 
-    def genre_film_work(self, pg_conn, update_ids):
-        cur = pg_conn.cursor()
-        cur.execute(
-            f"""SELECT fw.id
+        query = f"""SELECT DISTINCT fw.id
         FROM content.film_work fw 
-        LEFT JOIN content.genre_film_work gfw ON fw.id = gfw.film_work_id
-        WHERE gfw.genre_id IN {update_ids}"""
-        )
-        rows = cur.fetchall()
-        result = tuple([str(row[0]) for row in rows])
-        return result
+        LEFT JOIN content.{table}_film_work tfw ON fw.id = tfw.film_work_id
+        WHERE tfw.{table}_id """
+        full_query = self.count_tuple(query, update_ids)
+        cur = pg_conn.cursor()
+        cur.execute(full_query)
+        while rows := cur.fetchmany(settings.BUTCH_SIZE):
+            yield rows
 
-    def full_info_film_work(self, pg_conn, film_ids):
+    def full_info_film_work(self, pg_conn, film_ids: tuple) -> List[list]:
+        """Получение полной информации по фильмам по id film_work"""
         cur = pg_conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-        cur.execute(
-            f"""SELECT
+        query = f"""SELECT
         fw.id as fw_id,
         fw.title,
         fw.description,
@@ -67,9 +59,22 @@ class FilmWorkRepository:
         LEFT JOIN content.person p ON p.id = pfw.person_id
         LEFT JOIN content.genre_film_work gfw ON gfw.film_work_id = fw.id
         LEFT JOIN content.genre g ON g.id = gfw.genre_id
-        WHERE fw.id IN {film_ids}
-        GROUP BY
-        fw.id, p.id, pfw.role"""
-        )
+        WHERE fw.id """
+
+        group_by = " GROUP BY fw.id, p.id, pfw.role"
+        if len(film_ids) == 1:
+            query += f"= '{film_ids[0]}'{group_by}"
+        else:
+            query += f"IN {str(film_ids)}{group_by}"
+
+        cur.execute(query)
         rows = cur.fetchall()
         return rows
+
+    def count_tuple(self, query: str, update_ids: tuple) -> str:
+        """Формирование запроса в зависимости от количества данных в кортеже"""
+        if len(update_ids) == 1:
+            query += f"= '{update_ids[0]}'"
+        else:
+            query += f"IN {str(update_ids)}"
+        return query

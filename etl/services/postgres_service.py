@@ -1,8 +1,7 @@
-import logging
 from contextlib import contextmanager
-
 import psycopg2
 
+from etl.settings import logger
 from etl.shared.backoff import backoff
 
 
@@ -14,9 +13,10 @@ class PostgresService:
     def conn_context(self, dsn: str):
         try:
             conn = psycopg2.connect(dsn)
+            logger.info("Подключились к постгрес")
             yield conn
         except (Exception, psycopg2.DatabaseError) as e:
-            logging.error(f"Не удалось подключиться к базe: {e}")
+            logger.error(f"Не удалось подключиться к базe: {e}")
             raise
         finally:
             conn.close()

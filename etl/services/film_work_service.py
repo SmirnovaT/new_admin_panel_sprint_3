@@ -1,25 +1,84 @@
-from typing import Any
-
-from etl import settings
 from etl.dto.film_work_dto import FilmWorkDto
 from etl.repositories.film_work_repository import FilmWorkRepository
 from etl.settings import logger
+from itertools import zip_longest, chain
+from typing import Generator, List, Tuple
+from uuid import UUID
 
 
 class FilmWorkService:
+    """Сервис получения и обработки обновленных записей по фильмам."""
+
     repository = FilmWorkRepository()
 
-    def film_work_service(self, pg_conn, state, date_end):
-        unique_film_ids = self.unique_film_id(pg_conn, state, date_end)
-        if len(unique_film_ids) > 0:
-            full_info = self.repository.full_info_film_work(pg_conn, unique_film_ids)
-            film_dicts = self.mapping_data(full_info)
-            return film_dicts
-        else:
-            logger.info("Нет данных для обновления")
-            return None
+    def film_work_service(
+        self, pg_conn, date_start: str, date_end: str
+    ) -> Generator[List[dict], None, None]:
+        try:
+            film_work_ids = self.film_work(pg_conn, date_start, date_end, "film_work")
+            film_ids_by_persons = self.get_film_work_by_table(
+                pg_conn, date_start, date_end, "person"
+            )
+            film_ids_by_genres = self.get_film_work_by_table(
+                pg_conn, date_start, date_end, "genre"
+            )
+            unique_set = self.common_generator(
+                film_work_ids, film_ids_by_persons, film_ids_by_genres
+            )
 
-    def mapping_data(self, rows: Any) -> list:
+            for i in unique_set:
+                db_result = self.repository.full_info_film_work(pg_conn, i)
+                film_dicts = self.mapping_data(db_result)
+                yield film_dicts
+        except Exception as e:
+            logger.error(f"Ошибка при получении обновленных записей: {e}")
+
+    def film_work(
+        self, pg_conn, state: str, date_end: str, table: str
+    ) -> Generator[List[Tuple[UUID]], None, None]:
+        """Функция получения id записей из таблицы film_work, которые обновились"""
+        film_work_ids = self.repository.get_update_ids(
+            pg_conn, table, date_start=state, date_end=date_end
+        )
+        if len(list(film_work_ids)) == 0:
+            logger.info(f"Нет обновленных записей в таблице {table}")
+        yield from film_work_ids
+
+    def get_film_work_by_table(
+        self, pg_conn, state: str, date_end: str, table: str
+    ) -> Generator[List[Tuple[UUID]], None, None]:
+        """Функция получения film_work_id по обновленным записям из переданной таблицы (genre, person)"""
+        table_ids = self.repository.get_update_ids(
+            pg_conn, table, date_start=state, date_end=date_end
+        )
+        list_ids = []
+        for row_list in table_ids:
+            for row in row_list:
+                ids = str(row[0]).replace("-", "")
+                list_ids.append(ids)
+        if len(list_ids) == 0:
+            logger.info(f"Нет обновленных записей в таблице {table}")
+            return None
+        film_work_ids = self.repository.execute_query(pg_conn, tuple(list_ids), table)
+        yield from film_work_ids
+
+    def common_generator(
+        self,
+        film_work_ids: Generator[List[Tuple[UUID]], None, None],
+        film_ids_by_persons: Generator[List[Tuple[UUID]], None, None],
+        film_ids_by_genres: Generator[List[Tuple[UUID]], None, None],
+    ) -> Generator[Tuple[str], None, None]:
+        """Функция, объединяющая возвращаемые зачения генераторов в один кортеж и удалющая дубли"""
+        for row_1, row_2, row_3 in zip_longest(
+            film_work_ids, film_ids_by_persons, film_ids_by_genres, fillvalue=[]
+        ):
+            unique_set = set()
+            for item in chain(row_1, row_2, row_3):
+                unique_set.add(str(item[0]).replace("-", ""))
+            yield tuple(unique_set)
+
+    def mapping_data(self, rows: list) -> list:
+        """Преобразование данный для записи в индекс эластика"""
         films_dict = {}
         for row in rows:
             fw_id = str(row["fw_id"])
@@ -51,29 +110,3 @@ class FilmWorkService:
         film_work_dto = [(FilmWorkDto(**row)) for row in films_dict.values()]
         film_dicts = [i.dict() for i in film_work_dto]
         return film_dicts
-
-    def unique_film_id(self, pg_conn, state, date_end):
-        unique_set = set()
-        for table in settings.CHECK_TABLE:
-            rows = self.get_from_postgres(
-                pg_conn, table, date_start=state, date_end=date_end
-            )
-            if rows and len(rows) > 0:
-                for t in rows:
-                    unique_set.add(t)
-            else:
-                logger.info(f"В таблице {table} нет данных для обновления")
-        return tuple(unique_set)
-
-    def get_from_postgres(self, pg_conn, table, date_start, date_end):
-        update_ids = self.repository.get_update_ids(
-            pg_conn, table, date_start, date_end
-        )
-        if table == "film_work" and update_ids:
-            return update_ids
-        if table == "person" and update_ids:
-            film_work_ids = self.repository.person_film_work(pg_conn, update_ids)
-            return film_work_ids
-        elif table == "genre" and update_ids:
-            film_work_ids = self.repository.genre_film_work(pg_conn, update_ids)
-            return film_work_ids

@@ -19,7 +19,7 @@ class WriterDto(BaseModel):
 
 
 class FilmWorkDto(BaseModel):
-    fw_id: str = Field(..., alias="id")
+    id: str = Field(..., alias="id")
     imdb_rating: Optional[float] = Field(..., alias="rating")
     title: str
     description: Optional[str]

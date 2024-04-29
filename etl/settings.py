@@ -16,7 +16,9 @@ ELASTIC_URL = os.environ.get("ELASTIC_URL")
 
 POSTGRES_DSN = f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
 
-CHECK_TABLE = ["genre", "film_work", "person"]
+CHECK_TABLE = ["film_work", "person", "genre"]
+
+INDEX_NAME = "movies"
 
 logger = logging.getLogger("my_logger")
 logger.setLevel(logging.INFO)
