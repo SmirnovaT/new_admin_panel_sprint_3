@@ -22,8 +22,7 @@ def backoff(start_sleep_time=0.1, factor=2, border_sleep_time=10):
             total_sleep_time = 0
             while start_sleep_time < border_sleep_time:
                 try:
-                    result = func(*args, **kwargs)
-                    return result
+                    return func(*args, **kwargs)
                 except Exception as e:
                     sleep_time = min(
                         start_sleep_time * (factor**total_sleep_time),
@@ -34,7 +33,7 @@ def backoff(start_sleep_time=0.1, factor=2, border_sleep_time=10):
                         f"Произошла ошибка: {e}. Повторная попытка через {sleep_time} секунд."
                     )
                     time.sleep(sleep_time)
-            return None
+            raise
 
         return inner
 

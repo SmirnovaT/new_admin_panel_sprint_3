@@ -1,4 +1,4 @@
-from elasticsearch import Elasticsearch, ConnectionError, RequestError
+from elasticsearch import Elasticsearch
 
 from elasticsearch.helpers import bulk
 
@@ -16,15 +16,16 @@ class ElasticService:
         if es is None:
             logger.error("Не удалось подключиться к Elasticsearch")
             return None
-        else:
-            actions = [
-                {
-                    "_index": settings.INDEX_NAME,
-                    "_id": document["id"],
-                    "_source": document,
-                }
-                for document in data
-            ]
+        actions = [
+            {
+                "_index": settings.INDEX_NAME,
+                "_id": document["id"],
+                "_source": document,
+            }
+            for document in data
+        ]
+
+        with es:
             el_update = bulk(es, actions)
             logger.info("Загрузили пачку данных в эластик")
             return el_update
@@ -46,12 +47,6 @@ class ElasticService:
             else:
                 logger.info(f"Индекс '{index_name}' уже существует.")
             return es
-        except ConnectionError as e:
-            logger.error(f"Ошибка соединения с Elasticsearch: {e}")
-            return None
-        except RequestError as e:
-            logger.error(f"Ошибка запроса Elasticsearch: {e}")
-            return None
         except Exception as e:
-            logger.error(f"Непредвиденная ошибка: {e}")
-            return None
+            logger.error(f"Ошибка соединения с Elasticsearch: {e}")
+            raise

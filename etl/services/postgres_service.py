@@ -15,7 +15,7 @@ class PostgresService:
             conn = psycopg2.connect(dsn)
             logger.info("Подключились к постгрес")
             yield conn
-        except (Exception, psycopg2.DatabaseError) as e:
+        except Exception as e:
             logger.error(f"Не удалось подключиться к базe: {e}")
             raise
         finally:
